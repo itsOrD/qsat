@@ -23,5 +23,7 @@ htmlcov/
 *.swo
 *~
 
+p_and_c/
+
 .idea/
 .vscode/
