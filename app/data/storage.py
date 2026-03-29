@@ -39,7 +39,14 @@ def resolve_source_uri(source_uri: str) -> str:
         return source_uri
 
     if source_uri.startswith("s3://"):
-        log.info("Using S3 URI (requires s3fs): %s", source_uri)
+        try:
+            import s3fs  # noqa: F401
+        except ImportError:
+            raise ValueError(
+                "S3 support requires the 's3fs' package. "
+                "Install it with: pip install s3fs"
+            )
+        log.info("Using S3 URI (via s3fs): %s", source_uri)
         return source_uri
 
     scheme = source_uri.split("://")[0] if "://" in source_uri else source_uri
