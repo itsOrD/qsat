@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+_VALID_SCHEMES = ("file://", "gs://", "s3://")
 
 
 class RunRequest(BaseModel):
@@ -27,6 +29,15 @@ class RunRequest(BaseModel):
         default=False,
         description="If true, compute alerts without sending to Slack",
     )
+
+    @field_validator("source_uri")
+    @classmethod
+    def validate_uri_scheme(cls, v: str) -> str:
+        if not any(v.startswith(s) for s in _VALID_SCHEMES):
+            raise ValueError(
+                f"URI must start with one of: {', '.join(_VALID_SCHEMES)}"
+            )
+        return v
 
 
 class RunResponse(BaseModel):

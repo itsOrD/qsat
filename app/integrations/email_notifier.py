@@ -61,7 +61,7 @@ class SMTPNotifier(NotifierBackend):
                 server.send_message(msg)
             log.info("Email sent to %s: %s", to, subject)
             return True
-        except Exception:
+        except (smtplib.SMTPException, OSError):
             log.exception("Failed to send email to %s", to)
             return False
 

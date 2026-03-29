@@ -18,7 +18,7 @@ from app.persistence.database import Database
 
 router = APIRouter()
 
-# These are set during app lifespan (see main.py)
+# Set during app lifespan (see main.py)
 _settings: Settings | None = None
 _db: Database | None = None
 
@@ -28,6 +28,13 @@ def init_dependencies(settings: Settings, db: Database) -> None:
     global _settings, _db
     _settings = settings
     _db = db
+
+
+def _deps() -> tuple[Settings, Database]:
+    """Return initialized dependencies or raise 503."""
+    if _settings is None or _db is None:
+        raise HTTPException(status_code=503, detail="Service not initialized")
+    return _settings, _db
 
 
 def _validate_month(month_str: str) -> date:
@@ -60,6 +67,7 @@ def create_run(req: RunRequest):
     Reads Parquet data, computes alerts for the specified month,
     sends Slack messages (unless dry_run), and persists all outcomes.
     """
+    settings, db = _deps()
     month = _validate_month(req.month)
 
     try:
@@ -67,13 +75,13 @@ def create_run(req: RunRequest):
             source_uri=req.source_uri,
             month=month,
             dry_run=req.dry_run,
-            settings=_settings,
-            db=_db,
+            settings=settings,
+            db=db,
         )
     except FileNotFoundError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     return RunResponse(run_id=result["run_id"])
 
@@ -84,6 +92,7 @@ def preview(req: RunRequest):
 
     Forces dry_run=true and returns full alert details inline.
     """
+    settings, db = _deps()
     month = _validate_month(req.month)
 
     try:
@@ -91,16 +100,16 @@ def preview(req: RunRequest):
             source_uri=req.source_uri,
             month=month,
             dry_run=True,
-            settings=_settings,
-            db=_db,
+            settings=settings,
+            db=db,
         )
     except FileNotFoundError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     run_id = result["run_id"]
-    run_data = _db.get_run(run_id)
+    run_data = db.get_run(run_id)
     return PreviewResponse(
         run_id=run_id,
         month=req.month,
@@ -120,7 +129,8 @@ def preview(req: RunRequest):
 @router.get("/runs/{run_id}", response_model=RunDetailResponse)
 def get_run(run_id: str):
     """Retrieve persisted run results including alert outcomes."""
-    run_data = _db.get_run(run_id)
+    _, db = _deps()
+    run_data = db.get_run(run_id)
     if not run_data:
         raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")
 

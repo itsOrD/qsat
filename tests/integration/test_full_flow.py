@@ -90,7 +90,7 @@ class TestDryRunMode:
             "source_uri": "ftp://bad",
             "month": MONTH,
         })
-        assert resp.status_code == 400
+        assert resp.status_code == 422  # Pydantic validation rejects unknown schemes
 
     def test_run_not_found(self, client):
         resp = client.get("/runs/nonexistent-id")

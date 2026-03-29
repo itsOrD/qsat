@@ -35,7 +35,7 @@ def execute_run(
     dry_run: bool,
     settings: Settings,
     db: Database,
-) -> str:
+) -> dict:
     """Execute a full alert processing run.
 
     Args:
@@ -46,7 +46,7 @@ def execute_run(
         db: Database instance for persistence.
 
     Returns:
-        The run_id string.
+        Dict with run_id and processing statistics.
 
     Raises:
         ValueError: Invalid URI scheme.
@@ -267,4 +267,9 @@ def _send_unknown_region_notification(
         smtp_from=settings.smtp_from,
     )
     subject, body = build_unknown_region_email(run_id, month_str, unroutable_accounts)
-    notifier.send(to=settings.support_email, subject=subject, body=body)
+    if not notifier.send(to=settings.support_email, subject=subject, body=body):
+        log.error(
+            "Failed to send unknown-region notification for run %s (%d accounts)",
+            run_id,
+            len(unroutable_accounts),
+        )

@@ -112,12 +112,12 @@ def read_parquet_data(
         account = {
             "account_id": row["account_id"],
             "account_name": row["account_name"],
-            "account_region": row.get("account_region"),
+            "account_region": row["account_region"],
             "month": row["month"],
             "status": row["status"],
-            "renewal_date": row.get("renewal_date"),
-            "account_owner": row.get("account_owner"),
-            "arr": int(row["arr"]) if pd.notna(row.get("arr")) else 0,
+            "renewal_date": row["renewal_date"],
+            "account_owner": row["account_owner"],
+            "arr": int(row["arr"]) if pd.notna(row["arr"]) else 0,
         }
         # Normalize pandas NaT/NaN to None
         for key in ("account_region", "renewal_date", "account_owner"):
