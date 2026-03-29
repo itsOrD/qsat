@@ -8,7 +8,9 @@ delivery, email notification, and database persistence.
 from __future__ import annotations
 
 import logging
+import time
 import uuid
+from collections import Counter
 from datetime import date, datetime, timezone
 
 from app.core.alert_engine import (
@@ -17,6 +19,12 @@ from app.core.alert_engine import (
     format_slack_message,
 )
 from app.core.config import Settings
+from app.core.run_logger import (
+    log_alert_progress,
+    log_data_loaded,
+    log_run_start,
+    log_run_summary,
+)
 from app.data.parquet_reader import read_parquet_data
 from app.data.storage import resolve_source_uri
 from app.integrations.email_notifier import (
@@ -55,8 +63,9 @@ def execute_run(
     """
     run_id = str(uuid.uuid4())
     month_str = month.isoformat()
+    t_start = time.monotonic()
 
-    # Step 1-3: Create run record, log config
+    # Step 1-3: Create run record
     db.insert_run(
         run_id=run_id,
         source_uri=source_uri,
@@ -64,7 +73,8 @@ def execute_run(
         dry_run=dry_run,
         config_snapshot=settings.snapshot(),
     )
-    log.info("Run %s started: month=%s, dry_run=%s", run_id, month_str, dry_run)
+
+    log_run_start(run_id, month_str, source_uri, dry_run)
 
     try:
         # Step 4: Resolve source URI
@@ -86,13 +96,24 @@ def execute_run(
         db.complete_run(run_id, status="failed")
         raise
 
+    log_data_loaded(
+        rows_scanned=read_result.rows_scanned,
+        duplicates=read_result.duplicates_found,
+        at_risk=len(read_result.at_risk_accounts),
+        above_threshold=len(alert_records),
+        below_threshold=len(filtered_out),
+    )
+
     # Step 8: Process each alert
     counters = {"sent": 0, "skipped_replay": 0, "failed": 0}
+    channel_counts: Counter = Counter()
     unroutable_accounts: list[dict] = []
+    total_alerts = len(alert_records)
 
-    for alert in alert_records:
+    for i, alert in enumerate(alert_records, 1):
+        outcome = "failed"
         try:
-            _process_single_alert(
+            outcome = _process_single_alert(
                 alert=alert,
                 run_id=run_id,
                 month_str=month_str,
@@ -101,6 +122,7 @@ def execute_run(
                 db=db,
                 counters=counters,
                 unroutable_accounts=unroutable_accounts,
+                channel_counts=channel_counts,
             )
         except Exception:
             log.exception(
@@ -115,6 +137,8 @@ def execute_run(
                 status="failed",
                 error="unexpected_error",
             )
+
+        log_alert_progress(i, total_alerts, alert.account_id, outcome)
 
     # Step 9: Send unknown region notification
     if unroutable_accounts and not dry_run:
@@ -133,17 +157,19 @@ def execute_run(
         failed_deliveries=counters["failed"],
     )
 
-    log.info(
-        "Run %s completed: sent=%d, skipped=%d, failed=%d",
-        run_id,
-        counters["sent"],
-        counters["skipped_replay"],
-        counters["failed"],
-    )
-
-    # Return enriched result for preview/API use
+    elapsed_ms = int((time.monotonic() - t_start) * 1000)
     routable_count = sum(1 for a in alert_records if a.routable)
     unroutable_count = sum(1 for a in alert_records if not a.routable)
+
+    log_run_summary(
+        run_id=run_id,
+        status="succeeded",
+        counters=counters,
+        channel_counts=channel_counts,
+        unroutable_count=unroutable_count,
+        dry_run=dry_run,
+        elapsed_ms=elapsed_ms,
+    )
 
     return {
         "run_id": run_id,
@@ -166,8 +192,12 @@ def _process_single_alert(
     db: Database,
     counters: dict[str, int],
     unroutable_accounts: list[dict],
-) -> None:
-    """Process a single alert through the idempotency gate and delivery."""
+    channel_counts: Counter | None = None,
+) -> str:
+    """Process a single alert through the idempotency gate and delivery.
+
+    Returns the outcome string for progress logging.
+    """
     # Step 8d: Check idempotency gate
     prior = db.get_prior_outcome(alert.account_id, month_str)
     if prior:
@@ -181,11 +211,8 @@ def _process_single_alert(
                 channel=alert.channel,
                 status="skipped_replay",
             )
-            log.info("Skipped replay for %s (previously sent)", alert.account_id)
-            return
+            return "skipped_replay"
         # preview or failed -> proceed to retry/send
-        if prior_status == "preview":
-            log.info("Overwriting preview for %s with real send", alert.account_id)
 
     # Step 8e: Dry run
     if dry_run:
@@ -196,7 +223,7 @@ def _process_single_alert(
             channel=alert.channel,
             status="preview",
         )
-        return
+        return "preview"
 
     # Step 8f: Unroutable
     if not alert.routable:
@@ -215,12 +242,7 @@ def _process_single_alert(
             status="failed",
             error=alert.unroutable_reason,
         )
-        log.warning(
-            "Unroutable alert for %s: %s",
-            alert.account_id,
-            alert.unroutable_reason,
-        )
-        return
+        return "failed"
 
     # Step 8g-h: Send Slack alert
     payload = format_slack_message(alert, settings.app_base_url)
@@ -234,6 +256,8 @@ def _process_single_alert(
     now = datetime.now(timezone.utc).isoformat()
     if success:
         counters["sent"] += 1
+        if channel_counts is not None:
+            channel_counts[alert.channel] += 1
         db.upsert_alert_outcome(
             run_id=run_id,
             account_id=alert.account_id,
@@ -242,6 +266,7 @@ def _process_single_alert(
             status="sent",
             sent_at=now,
         )
+        return "sent"
     else:
         counters["failed"] += 1
         db.upsert_alert_outcome(
@@ -252,6 +277,7 @@ def _process_single_alert(
             status="failed",
             error=error,
         )
+        return "failed"
 
 
 def _send_unknown_region_notification(
