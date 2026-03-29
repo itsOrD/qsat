@@ -1,0 +1,21 @@
+services:
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - SLACK_WEBHOOK_BASE_URL=http://mock-slack:9000/slack/webhook
+      - DATABASE_PATH=/app/data/alerts.db
+    depends_on:
+      - mock-slack
+
+  mock-slack:
+    build: .
+    command: uvicorn mock_slack.server:app --host 0.0.0.0 --port 9000
+    ports:
+      - "9000:9000"
+    environment:
+      - MOCK_SLACK_FAIL_RATE_429=0.10
+      - MOCK_SLACK_FAIL_RATE_500=0.05
