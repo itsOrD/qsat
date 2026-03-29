@@ -63,7 +63,7 @@ def create_run(req: RunRequest):
     month = _validate_month(req.month)
 
     try:
-        run_id = execute_run(
+        result = execute_run(
             source_uri=req.source_uri,
             month=month,
             dry_run=req.dry_run,
@@ -75,7 +75,7 @@ def create_run(req: RunRequest):
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
-    return RunResponse(run_id=run_id)
+    return RunResponse(run_id=result["run_id"])
 
 
 @router.post("/preview", response_model=PreviewResponse)
@@ -87,7 +87,7 @@ def preview(req: RunRequest):
     month = _validate_month(req.month)
 
     try:
-        run_id = execute_run(
+        result = execute_run(
             source_uri=req.source_uri,
             month=month,
             dry_run=True,
@@ -99,6 +99,7 @@ def preview(req: RunRequest):
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
+    run_id = result["run_id"]
     run_data = _db.get_run(run_id)
     return PreviewResponse(
         run_id=run_id,
@@ -106,11 +107,12 @@ def preview(req: RunRequest):
         dry_run=True,
         alerts=run_data.get("alert_outcomes", []),
         counts={
-            "rows_scanned": run_data.get("rows_scanned", 0),
-            "duplicates_found": run_data.get("duplicates_found", 0),
-            "alerts_sent": run_data.get("alerts_sent", 0),
-            "skipped_replay": run_data.get("skipped_replay", 0),
-            "failed_deliveries": run_data.get("failed_deliveries", 0),
+            "rows_scanned": result["rows_scanned"],
+            "duplicates_found": result["duplicates_found"],
+            "total_at_risk": result["total_at_risk"],
+            "above_threshold": result["above_threshold"],
+            "routable": result["routable"],
+            "unroutable": result["unroutable"],
         },
     )
 

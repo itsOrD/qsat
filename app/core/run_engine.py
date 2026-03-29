@@ -141,7 +141,20 @@ def execute_run(
         counters["failed"],
     )
 
-    return run_id
+    # Return enriched result for preview/API use
+    routable_count = sum(1 for a in alert_records if a.routable)
+    unroutable_count = sum(1 for a in alert_records if not a.routable)
+
+    return {
+        "run_id": run_id,
+        "total_at_risk": len(read_result.at_risk_accounts),
+        "below_threshold": len(filtered_out),
+        "above_threshold": len(alert_records),
+        "routable": routable_count,
+        "unroutable": unroutable_count,
+        "rows_scanned": read_result.rows_scanned,
+        "duplicates_found": read_result.duplicates_found,
+    }
 
 
 def _process_single_alert(
