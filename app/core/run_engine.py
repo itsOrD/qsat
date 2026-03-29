@@ -8,9 +8,11 @@ delivery, email notification, and database persistence.
 from __future__ import annotations
 
 import logging
+import threading
 import time
 import uuid
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime, timezone
 
 from app.core.alert_engine import (
@@ -104,13 +106,15 @@ def execute_run(
         below_threshold=len(filtered_out),
     )
 
-    # Step 8: Process each alert
+    # Step 8: Process alerts concurrently
     counters = {"sent": 0, "skipped_replay": 0, "failed": 0}
     channel_counts: Counter = Counter()
     unroutable_accounts: list[dict] = []
     total_alerts = len(alert_records)
+    progress_lock = threading.Lock()
+    progress_counter = [0]  # mutable for closure
 
-    for i, alert in enumerate(alert_records, 1):
+    def _process_one(alert: AlertRecord) -> None:
         outcome = "failed"
         try:
             outcome = _process_single_alert(
@@ -123,12 +127,14 @@ def execute_run(
                 counters=counters,
                 unroutable_accounts=unroutable_accounts,
                 channel_counts=channel_counts,
+                lock=progress_lock,
             )
         except Exception:
             log.exception(
                 "Unexpected error processing alert for %s", alert.account_id
             )
-            counters["failed"] += 1
+            with progress_lock:
+                counters["failed"] += 1
             db.upsert_alert_outcome(
                 run_id=run_id,
                 account_id=alert.account_id,
@@ -138,7 +144,15 @@ def execute_run(
                 error="unexpected_error",
             )
 
-        log_alert_progress(i, total_alerts, alert.account_id, outcome)
+        with progress_lock:
+            progress_counter[0] += 1
+            log_alert_progress(progress_counter[0], total_alerts, alert.account_id, outcome)
+
+    max_workers = 1 if dry_run else 10
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        futures = [pool.submit(_process_one, alert) for alert in alert_records]
+        for future in as_completed(futures):
+            future.result()  # propagate any uncaught exceptions
 
     # Step 9: Send unknown region notification
     if unroutable_accounts and not dry_run:
@@ -193,17 +207,26 @@ def _process_single_alert(
     counters: dict[str, int],
     unroutable_accounts: list[dict],
     channel_counts: Counter | None = None,
+    lock: threading.Lock | None = None,
 ) -> str:
     """Process a single alert through the idempotency gate and delivery.
 
     Returns the outcome string for progress logging.
+    Thread-safe when lock is provided.
     """
+    def _inc(key: str) -> None:
+        if lock:
+            with lock:
+                counters[key] += 1
+        else:
+            counters[key] += 1
+
     # Step 8d: Check idempotency gate
     prior = db.get_prior_outcome(alert.account_id, month_str)
     if prior:
         prior_status = prior["status"]
         if prior_status == "sent":
-            counters["skipped_replay"] += 1
+            _inc("skipped_replay")
             db.upsert_alert_outcome(
                 run_id=run_id,
                 account_id=alert.account_id,
@@ -227,13 +250,22 @@ def _process_single_alert(
 
     # Step 8f: Unroutable
     if not alert.routable:
-        counters["failed"] += 1
-        unroutable_accounts.append({
-            "account_id": alert.account_id,
-            "account_name": alert.account_name,
-            "account_region": alert.account_region,
-            "arr": alert.arr,
-        })
+        _inc("failed")
+        if lock:
+            with lock:
+                unroutable_accounts.append({
+                    "account_id": alert.account_id,
+                    "account_name": alert.account_name,
+                    "account_region": alert.account_region,
+                    "arr": alert.arr,
+                })
+        else:
+            unroutable_accounts.append({
+                "account_id": alert.account_id,
+                "account_name": alert.account_name,
+                "account_region": alert.account_region,
+                "arr": alert.arr,
+            })
         db.upsert_alert_outcome(
             run_id=run_id,
             account_id=alert.account_id,
@@ -255,9 +287,13 @@ def _process_single_alert(
 
     now = datetime.now(timezone.utc).isoformat()
     if success:
-        counters["sent"] += 1
+        _inc("sent")
         if channel_counts is not None:
-            channel_counts[alert.channel] += 1
+            if lock:
+                with lock:
+                    channel_counts[alert.channel] += 1
+            else:
+                channel_counts[alert.channel] += 1
         db.upsert_alert_outcome(
             run_id=run_id,
             account_id=alert.account_id,
@@ -268,7 +304,7 @@ def _process_single_alert(
         )
         return "sent"
     else:
-        counters["failed"] += 1
+        _inc("failed")
         db.upsert_alert_outcome(
             run_id=run_id,
             account_id=alert.account_id,
