@@ -1,32 +1,45 @@
+"""FastAPI application entry point.
+
+Configures logging, initializes the database on startup,
+and mounts all API routes.
+"""
+
+from __future__ import annotations
+
+import logging
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
-from pydantic import BaseModel
 
-app = FastAPI(title="Risk Alert Service")
+from app.api.routes import init_dependencies, router
+from app.core.config import Settings
+from app.persistence.database import Database
 
-class RunRequest(BaseModel):
-    source_uri: str
-    month: str  # YYYY-MM-01
-    dry_run: bool = False
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%Y-%m-%dT%H:%M:%S",
+)
 
-@app.get("/health")
-def health():
-    return {"ok": True}
 
-@app.post("/runs")
-def create_run(req: RunRequest):
-    # TODO:
-    # - open parquet via storage.open_uri
-    # - compute alerts for req.month
-    # - send to Slack unless dry_run
-    # - persist run and alert outcomes
-    return {"run_id": "TODO"}
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Initialize settings and database on startup."""
+    settings = Settings()
+    db = Database(settings.database_path)
+    init_dependencies(settings, db)
+    logging.getLogger(__name__).info("Risk Alert Service started")
+    yield
 
-@app.get("/runs/{run_id}")
-def get_run(run_id: str):
-    # TODO: return run status + counts + samples
-    return {"run_id": run_id, "status": "TODO"}
 
-@app.post("/preview")
-def preview(req: RunRequest):
-    # TODO: compute alerts but do not send
-    return {"alerts": [], "month": req.month}
+app = FastAPI(
+    title="Risk Alert Service",
+    description=(
+        "Batch service that identifies at-risk accounts from Parquet data "
+        "and posts formatted alerts to region-specific Slack channels."
+    ),
+    version="1.0.0",
+    lifespan=lifespan,
+)
+
+app.include_router(router)
