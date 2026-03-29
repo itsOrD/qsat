@@ -11,6 +11,7 @@ import json
 import logging
 import os
 from datetime import datetime, timezone
+from typing import Any
 
 from sqlalchemy import (
     Boolean,
@@ -213,6 +214,15 @@ class Database:
 
     # ---- Alert Outcomes ----
 
+    @staticmethod
+    def _parse_datetime(value: Any) -> datetime | None:
+        """Convert an ISO string or datetime to a datetime object."""
+        if value is None:
+            return None
+        if isinstance(value, datetime):
+            return value
+        return datetime.fromisoformat(str(value))
+
     def upsert_alert_outcome(
         self,
         run_id: str,
@@ -224,6 +234,7 @@ class Database:
         sent_at: str | None = None,
     ) -> None:
         """Insert or update an alert outcome (idempotent on account_id + month)."""
+        sent_at_dt = self._parse_datetime(sent_at)
         with self._session() as session:
             existing = (
                 session.query(AlertOutcome)
@@ -235,7 +246,7 @@ class Database:
                 existing.channel = channel
                 existing.status = status
                 existing.error = error
-                existing.sent_at = sent_at
+                existing.sent_at = sent_at_dt
             else:
                 outcome = AlertOutcome(
                     run_id=run_id,
@@ -245,7 +256,7 @@ class Database:
                     channel=channel,
                     status=status,
                     error=error,
-                    sent_at=sent_at,
+                    sent_at=sent_at_dt,
                 )
                 session.add(outcome)
             session.commit()
