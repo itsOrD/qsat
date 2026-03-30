@@ -79,20 +79,33 @@ def read_parquet_data(
     target_df = target_table.to_pandas()
     target_rows = len(target_df)
 
-    # Read 2: history — only columns for duration calc
-    history_table = pq.read_table(
-        source_path,
-        columns=HISTORY_COLUMNS,
-        filters=[("month", "<", target_month)],
-    )
-    history_df = history_table.to_pandas()
-    history_rows = len(history_df)
+    # Dedup target month first (need all statuses for correct dedup —
+    # a Healthy row with a newer timestamp should beat an At Risk row)
+    target_df, target_dupes = _dedup(target_df)
+
+    # Filter to At Risk and extract IDs for narrowed history read
+    at_risk_df = target_df[target_df["status"] == "At Risk"]
+    at_risk_ids = at_risk_df["account_id"].tolist()
+
+    # Read 2: history — only for at-risk accounts, only duration columns
+    if at_risk_ids:
+        history_table = pq.read_table(
+            source_path,
+            columns=HISTORY_COLUMNS,
+            filters=[
+                ("month", "<", target_month),
+                ("account_id", "in", at_risk_ids),
+            ],
+        )
+        history_df = history_table.to_pandas()
+        history_rows = len(history_df)
+        history_df, history_dupes = _dedup(history_df)
+    else:
+        history_df = pd.DataFrame(columns=HISTORY_COLUMNS)
+        history_rows = 0
+        history_dupes = 0
 
     total_scanned = target_rows + history_rows
-
-    # Deduplicate both
-    target_df, target_dupes = _dedup(target_df)
-    history_df, history_dupes = _dedup(history_df)
     total_dupes = target_dupes + history_dupes
 
     if total_dupes > 0:
@@ -103,10 +116,7 @@ def read_parquet_data(
             history_dupes,
         )
 
-    # Filter to At Risk
-    at_risk_df = target_df[target_df["status"] == "At Risk"]
-
-    # Convert to list of dicts for downstream processing
+    # Convert at-risk accounts to list of dicts
     at_risk_accounts = []
     for _, row in at_risk_df.iterrows():
         account = {
@@ -131,12 +141,12 @@ def read_parquet_data(
         history_lookup[(row["account_id"], row["month"])] = row["status"]
 
     log.info(
-        "Read %d rows (%d target, %d history), %d duplicates, %d at-risk accounts",
+        "Read %d rows (%d target, %d history for %d at-risk accounts), %d duplicates",
         total_scanned,
         target_rows,
         history_rows,
+        len(at_risk_ids),
         total_dupes,
-        len(at_risk_accounts),
     )
 
     return ReadResult(
