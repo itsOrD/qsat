@@ -136,9 +136,11 @@ def read_parquet_data(
         at_risk_accounts.append(account)
 
     # Build history lookup: (account_id, month) -> status
-    history_lookup: dict[tuple[str, date], str] = {}
-    for _, row in history_df.iterrows():
-        history_lookup[(row["account_id"], row["month"])] = row["status"]
+    # Vectorized extraction — avoids iterrows() overhead at scale
+    history_lookup: dict[tuple[str, date], str] = dict(zip(
+        zip(history_df["account_id"], history_df["month"]),
+        history_df["status"],
+    ))
 
     log.info(
         "Read %d rows (%d target, %d history for %d at-risk accounts), %d duplicates",
