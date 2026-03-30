@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "risk-alert-service"
+version = "1.0.0"
+requires-python = ">=3.11"
+
+[project.optional-dependencies]
+test = [
+    "pytest>=8.0",
+    "httpx>=0.24",
+]
+
+[tool.setuptools.packages.find]
+include = ["app*"]

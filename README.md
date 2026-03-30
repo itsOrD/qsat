@@ -222,9 +222,10 @@ The second run's `GET /runs/{id}` response shows `skipped_replay` counts reflect
 ## Testing
 
 ```bash
-make test           # Unit tests only (no network, no Docker)
-make test-all       # Unit + integration (dry_run mode)
-make test-mock      # Integration against mock Slack (requires: make mock)
+pip install -e ".[test]"   # Install test dependencies (pytest, httpx)
+make test                  # Unit tests only (no network, no Docker)
+make test-all              # Unit + integration (dry_run mode)
+make test-mock             # Integration against mock Slack (requires: make mock)
 ```
 
 See [tests/TEST_PLAN.md](tests/TEST_PLAN.md) for coverage details and future expansion.
