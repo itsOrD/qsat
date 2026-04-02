@@ -86,11 +86,19 @@ def _require_role(
         raise HTTPException(status_code=401, detail="Missing Bearer token")
 
     runner_tokens = settings.runner_tokens()
-    viewer_tokens = settings.viewer_tokens() | runner_tokens
+    viewer_tokens_only = settings.viewer_tokens()
+    viewer_tokens = viewer_tokens_only | runner_tokens
 
-    if not runner_tokens and not viewer_tokens:
+    # Global misconfiguration: RBAC enabled but no tokens of any kind configured
+    if not runner_tokens and not viewer_tokens_only:
         raise HTTPException(status_code=503, detail="RBAC is enabled but no tokens configured")
 
+    # Role-specific misconfiguration: runner endpoints require runner tokens
+    if required_role == "runner" and not runner_tokens:
+        raise HTTPException(
+            status_code=503,
+            detail="RBAC is enabled but no runner tokens configured",
+        )
     authorized = (
         any(compare_digest(token, t) for t in runner_tokens)
         if required_role == "runner"
