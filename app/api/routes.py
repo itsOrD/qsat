@@ -59,7 +59,14 @@ def _extract_bearer_token(authorization: str | None) -> str | None:
     """Extract Bearer token from Authorization header."""
     if not authorization:
         return None
-    scheme, _, token = authorization.partition(" ")
+    # Normalize whitespace and tolerate multiple spaces or other whitespace separators.
+    header = authorization.strip()
+    if not header:
+        return None
+    parts = header.split(None, 1)  # split on any whitespace, at most once
+    if len(parts) != 2:
+        return None
+    scheme, token = parts[0], parts[1].strip()
     if scheme.lower() != "bearer" or not token:
         return None
     return token
