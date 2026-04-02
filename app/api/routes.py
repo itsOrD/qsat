@@ -99,11 +99,14 @@ def _require_role(
             status_code=503,
             detail="RBAC is enabled but no runner tokens configured",
         )
-    authorized = (
-        any(compare_digest(token, t) for t in runner_tokens)
-        if required_role == "runner"
-        else any(compare_digest(token, t) for t in viewer_tokens)
-    )
+    token_set = runner_tokens if required_role == "runner" else viewer_tokens
+    # Use a list comprehension (not a generator) so that compare_digest is
+    # called for *every* configured token before any result is inspected.
+    # A generator expression passed to any() short-circuits on the first True,
+    # meaning the number of digest calls — and therefore wall-clock time —
+    # varies with the matching token's position in the list.  Evaluating all
+    # comparisons up front eliminates that timing side-channel.
+    authorized = any([compare_digest(token, t) for t in token_set])
     if not authorized:
         raise HTTPException(status_code=403, detail="Forbidden")
 
