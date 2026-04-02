@@ -25,10 +25,10 @@ VIEWER_HEADERS = {"Authorization": "Bearer test-viewer-token"}
 
 
 @pytest.fixture
-def client():
-    os.environ["APP_MODE"] = "secure"
-    os.environ["RBAC_RUNNER_TOKENS"] = "test-runner-token"
-    os.environ["RBAC_VIEWER_TOKENS"] = "test-viewer-token"
+def client(monkeypatch):
+    monkeypatch.setenv("APP_MODE", "secure")
+    monkeypatch.setenv("RBAC_RUNNER_TOKENS", "test-runner-token")
+    monkeypatch.setenv("RBAC_VIEWER_TOKENS", "test-viewer-token")
     with TestClient(app) as c:
         yield c
 
