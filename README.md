@@ -54,8 +54,46 @@ All settings are overridable via environment variables. See [`.env.example`](.en
 | `SMTP_HOST` | string | — | SMTP server (enables real email delivery) |
 | `SMTP_PORT` | int | `587` | SMTP port |
 | `SMTP_FROM` | string | — | Sender email address |
+| `APP_MODE` | enum | `demo` | `demo` disables RBAC for local demos; `secure` enforces RBAC |
+| `RBAC_ENABLED` | bool | `null` | Optional override for RBAC behavior (normally inferred from `APP_MODE`) |
+| `RBAC_RUNNER_TOKENS` | csv string | — | Tokens allowed to call `POST /runs` and `POST /preview` |
+| `RBAC_VIEWER_TOKENS` | csv string | — | Tokens allowed to call `GET /runs/{run_id}` (runner tokens also work) |
 
 **Slack mode precedence:** `SLACK_WEBHOOK_BASE_URL` > `SLACK_WEBHOOK_URL` > no Slack (logged warning).
+
+## RBAC, Dev Mode, and Demo Mode
+
+The service keeps **open-ended Parquet source selection** (`file://`, `s3://`, `gs://`) and secures execution with token RBAC.
+
+### Recommended (customer/prod)
+
+```bash
+APP_MODE=secure
+RBAC_RUNNER_TOKENS=runner-token-1
+RBAC_VIEWER_TOKENS=viewer-token-1
+```
+
+Then call protected endpoints with:
+
+```bash
+-H "Authorization: Bearer <token>"
+```
+
+### Local dev / demo
+
+For local-only demos, run:
+
+```bash
+make up-demo
+```
+
+For secure/prod-like compose runs, use:
+
+```bash
+RBAC_RUNNER_TOKENS=runner-token-1 RBAC_VIEWER_TOKENS=viewer-token-1 make up-secure
+```
+
+No file edits or comment/uncomment toggles are required; mode is selected by command-time flags/environment (`APP_MODE=demo` vs `APP_MODE=secure`).
 
 ## ARR Threshold Rationale
 
@@ -79,6 +117,7 @@ Compute alerts without sending to Slack. Returns full alert details inline.
 ```bash
 curl -s -X POST http://localhost:8000/preview \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer runner-token-1" \
   -d '{"source_uri": "file://./monthly_account_status.parquet", "month": "2026-01-01"}' \
   | python -m json.tool
 ```
@@ -121,6 +160,7 @@ Execute a full alert processing run synchronously. Blocks until all alerts are p
 ```bash
 curl -s -X POST http://localhost:8000/runs \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer runner-token-1" \
   -d '{"source_uri": "file://./monthly_account_status.parquet", "month": "2026-01-01"}' \
   | python -m json.tool
 ```
@@ -137,7 +177,9 @@ Response:
 Retrieve persisted run results including all alert outcomes.
 
 ```bash
-curl -s http://localhost:8000/runs/1455f5d8-8e66-46ea-a4e3-96f6c763a30b | python -m json.tool
+curl -s \
+  -H "Authorization: Bearer viewer-token-1" \
+  http://localhost:8000/runs/1455f5d8-8e66-46ea-a4e3-96f6c763a30b | python -m json.tool
 ```
 
 Response:
@@ -237,7 +279,8 @@ Integration tests run the full pipeline via FastAPI TestClient in three modes: `
 ## Docker
 
 ```bash
-docker compose up --build       # Start app + mock Slack
+make up-demo                    # Start app + mock Slack (RBAC disabled)
+RBAC_RUNNER_TOKENS=runner-token-1 RBAC_VIEWER_TOKENS=viewer-token-1 make up-secure
 docker compose down             # Stop
 ```
 
