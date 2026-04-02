@@ -31,6 +31,7 @@ def resolve_source_uri(source_uri: str) -> str:
             raise FileNotFoundError(
                 f"Local file not found: {local_path} (from URI: {source_uri})"
             )
+
         log.info("Resolved local file: %s", local_path)
         return local_path
 

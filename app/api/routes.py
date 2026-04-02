@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from datetime import date
+from secrets import compare_digest
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Header, HTTPException
 
 from app.api.schemas import (
     PreviewResponse,
@@ -54,6 +55,44 @@ def _validate_month(month_str: str) -> date:
     return d
 
 
+def _extract_bearer_token(authorization: str | None) -> str | None:
+    """Extract Bearer token from Authorization header."""
+    if not authorization:
+        return None
+    scheme, _, token = authorization.partition(" ")
+    if scheme.lower() != "bearer" or not token:
+        return None
+    return token
+
+
+def _require_role(
+    settings: Settings,
+    required_role: str,
+    authorization: str | None,
+) -> None:
+    """Enforce RBAC for protected endpoints."""
+    if not settings.auth_required():
+        return
+
+    token = _extract_bearer_token(authorization)
+    if token is None:
+        raise HTTPException(status_code=401, detail="Missing Bearer token")
+
+    runner_tokens = settings.runner_tokens()
+    viewer_tokens = settings.viewer_tokens() | runner_tokens
+
+    if not runner_tokens and not viewer_tokens:
+        raise HTTPException(status_code=503, detail="RBAC is enabled but no tokens configured")
+
+    authorized = (
+        any(compare_digest(token, t) for t in runner_tokens)
+        if required_role == "runner"
+        else any(compare_digest(token, t) for t in viewer_tokens)
+    )
+    if not authorized:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+
 @router.get("/health")
 def health():
     """Health check endpoint."""
@@ -61,13 +100,14 @@ def health():
 
 
 @router.post("/runs", response_model=RunResponse)
-def create_run(req: RunRequest):
+def create_run(req: RunRequest, authorization: str | None = Header(default=None)):
     """Execute a full alert processing run (synchronous).
 
     Reads Parquet data, computes alerts for the specified month,
     sends Slack messages (unless dry_run), and persists all outcomes.
     """
     settings, db = _deps()
+    _require_role(settings, "runner", authorization)
     month = _validate_month(req.month)
 
     try:
@@ -87,12 +127,13 @@ def create_run(req: RunRequest):
 
 
 @router.post("/preview", response_model=PreviewResponse)
-def preview(req: RunRequest):
+def preview(req: RunRequest, authorization: str | None = Header(default=None)):
     """Preview alerts without sending to Slack.
 
     Forces dry_run=true and returns full alert details inline.
     """
     settings, db = _deps()
+    _require_role(settings, "runner", authorization)
     month = _validate_month(req.month)
 
     try:
@@ -127,9 +168,10 @@ def preview(req: RunRequest):
 
 
 @router.get("/runs/{run_id}", response_model=RunDetailResponse)
-def get_run(run_id: str):
+def get_run(run_id: str, authorization: str | None = Header(default=None)):
     """Retrieve persisted run results including alert outcomes."""
-    _, db = _deps()
+    settings, db = _deps()
+    _require_role(settings, "viewer", authorization)
     run_data = db.get_run(run_id)
     if not run_data:
         raise HTTPException(status_code=404, detail=f"Run not found: {run_id}")

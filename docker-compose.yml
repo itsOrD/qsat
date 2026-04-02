@@ -8,6 +8,9 @@ services:
     environment:
       - SLACK_WEBHOOK_BASE_URL=http://mock-slack:9000/slack/webhook
       - DATABASE_PATH=/app/data/alerts.db
+      - APP_MODE=${APP_MODE:-demo}
+      - RBAC_RUNNER_TOKENS=${RBAC_RUNNER_TOKENS:-}
+      - RBAC_VIEWER_TOKENS=${RBAC_VIEWER_TOKENS:-}
     depends_on:
       - mock-slack
 

@@ -5,6 +5,8 @@ Every field is overridable by an environment variable (uppercased name).
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic_settings import BaseSettings
 from pydantic import Field
 
@@ -18,6 +20,13 @@ class Settings(BaseSettings):
 
     # --- Storage ---
     database_path: str = "./data/alerts.db"
+
+
+    # --- API Surface Hardening ---
+    app_mode: Literal["demo", "secure"] = "demo"
+    rbac_enabled: bool | None = None
+    rbac_runner_tokens: str | None = None
+    rbac_viewer_tokens: str | None = None
 
     # --- Business Logic ---
     arr_threshold: int = Field(
@@ -43,6 +52,24 @@ class Settings(BaseSettings):
     smtp_from: str | None = None
 
     model_config = {"env_file": ".env", "extra": "ignore"}
+
+    @staticmethod
+    def _split_tokens(raw_tokens: str | None) -> set[str]:
+        if not raw_tokens:
+            return set()
+        return {t.strip() for t in raw_tokens.split(",") if t.strip()}
+
+    def runner_tokens(self) -> set[str]:
+        return self._split_tokens(self.rbac_runner_tokens)
+
+    def viewer_tokens(self) -> set[str]:
+        return self._split_tokens(self.rbac_viewer_tokens)
+
+    def auth_required(self) -> bool:
+        """Resolve whether RBAC should be enforced."""
+        if self.rbac_enabled is not None:
+            return self.rbac_enabled
+        return self.app_mode == "secure"
 
     def snapshot(self) -> dict:
         """Return an allowlist of config safe to persist. Never includes secrets."""
