@@ -20,10 +20,13 @@ FIXTURE_URI = "file://./tests/fixtures/test_accounts.parquet"
 MONTH = "2026-01-01"
 
 MODE = os.getenv("TEST_SLACK_MODE", "dry_run")
+API_KEY = "test-api-key"
+AUTH_HEADERS = {"x-api-key": API_KEY}
 
 
 @pytest.fixture
 def client():
+    os.environ["API_KEY"] = API_KEY
     with TestClient(app) as c:
         yield c
 
@@ -35,7 +38,7 @@ class TestDryRunMode:
         resp = client.post("/preview", json={
             "source_uri": FIXTURE_URI,
             "month": MONTH,
-        })
+        }, headers=AUTH_HEADERS)
         assert resp.status_code == 200
         data = resp.json()
         assert data["dry_run"] is True
@@ -48,7 +51,7 @@ class TestDryRunMode:
             "source_uri": FIXTURE_URI,
             "month": MONTH,
             "dry_run": True,
-        })
+        }, headers=AUTH_HEADERS)
         assert resp.status_code == 200
         run_id = resp.json()["run_id"]
 
@@ -64,32 +67,39 @@ class TestDryRunMode:
         assert resp.status_code == 200
         assert resp.json()["status"] == "ok"
 
+    def test_preview_requires_api_key(self, client):
+        resp = client.post("/preview", json={
+            "source_uri": FIXTURE_URI,
+            "month": MONTH,
+        })
+        assert resp.status_code == 401
+
     def test_invalid_month_format(self, client):
         resp = client.post("/preview", json={
             "source_uri": FIXTURE_URI,
             "month": "not-a-date",
-        })
+        }, headers=AUTH_HEADERS)
         assert resp.status_code == 400
 
     def test_invalid_month_not_first(self, client):
         resp = client.post("/preview", json={
             "source_uri": FIXTURE_URI,
             "month": "2026-01-15",
-        })
+        }, headers=AUTH_HEADERS)
         assert resp.status_code == 400
 
     def test_missing_file(self, client):
         resp = client.post("/preview", json={
             "source_uri": "file://./nonexistent.parquet",
             "month": MONTH,
-        })
+        }, headers=AUTH_HEADERS)
         assert resp.status_code == 400
 
     def test_unsupported_scheme(self, client):
         resp = client.post("/preview", json={
             "source_uri": "ftp://bad",
             "month": MONTH,
-        })
+        }, headers=AUTH_HEADERS)
         assert resp.status_code == 422  # Pydantic validation rejects unknown schemes
 
     def test_run_not_found(self, client):
@@ -106,7 +116,7 @@ class TestMockSlackMode:
             "source_uri": FIXTURE_URI,
             "month": MONTH,
             "dry_run": False,
-        })
+        }, headers=AUTH_HEADERS)
         assert resp.status_code == 200
         run_id = resp.json()["run_id"]
 
@@ -129,13 +139,13 @@ class TestMockSlackMode:
             "source_uri": FIXTURE_URI,
             "month": MONTH,
             "dry_run": False,
-        })
+        }, headers=AUTH_HEADERS)
         # Second run (same month)
         resp = client.post("/runs", json={
             "source_uri": FIXTURE_URI,
             "month": MONTH,
             "dry_run": False,
-        })
+        }, headers=AUTH_HEADERS)
         run_id = resp.json()["run_id"]
         detail = client.get(f"/runs/{run_id}")
         run = detail.json()
@@ -146,7 +156,7 @@ class TestMockSlackMode:
             "source_uri": FIXTURE_URI,
             "month": MONTH,
             "dry_run": False,
-        })
+        }, headers=AUTH_HEADERS)
         logs = requests.get("http://localhost:9000/logs?limit=200", timeout=5)
         records = logs.json()["records"]
         # No messages should go to a channel for null/unknown region

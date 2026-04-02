@@ -32,6 +32,7 @@ def settings(tmp_db):
         slack_webhook_base_url="http://localhost:9000/slack/webhook",
         database_path=tmp_db._db_path,
         arr_threshold=10_000,
+        api_key="test-api-key",
     )
 
 

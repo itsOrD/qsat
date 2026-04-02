@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from datetime import date
+from secrets import compare_digest
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Header, HTTPException
 
 from app.api.schemas import (
     PreviewResponse,
@@ -54,6 +55,17 @@ def _validate_month(month_str: str) -> date:
     return d
 
 
+def _require_api_key(settings: Settings, x_api_key: str | None) -> None:
+    """Enforce API-key auth for privileged run endpoints."""
+    if not settings.api_key:
+        raise HTTPException(
+            status_code=503,
+            detail="API authentication is not configured.",
+        )
+    if x_api_key is None or not compare_digest(x_api_key, settings.api_key):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+
 @router.get("/health")
 def health():
     """Health check endpoint."""
@@ -61,13 +73,14 @@ def health():
 
 
 @router.post("/runs", response_model=RunResponse)
-def create_run(req: RunRequest):
+def create_run(req: RunRequest, x_api_key: str | None = Header(default=None)):
     """Execute a full alert processing run (synchronous).
 
     Reads Parquet data, computes alerts for the specified month,
     sends Slack messages (unless dry_run), and persists all outcomes.
     """
     settings, db = _deps()
+    _require_api_key(settings, x_api_key)
     month = _validate_month(req.month)
 
     try:
@@ -87,12 +100,13 @@ def create_run(req: RunRequest):
 
 
 @router.post("/preview", response_model=PreviewResponse)
-def preview(req: RunRequest):
+def preview(req: RunRequest, x_api_key: str | None = Header(default=None)):
     """Preview alerts without sending to Slack.
 
     Forces dry_run=true and returns full alert details inline.
     """
     settings, db = _deps()
+    _require_api_key(settings, x_api_key)
     month = _validate_month(req.month)
 
     try:

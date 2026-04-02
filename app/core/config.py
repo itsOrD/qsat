@@ -18,6 +18,10 @@ class Settings(BaseSettings):
 
     # --- Storage ---
     database_path: str = "./data/alerts.db"
+    api_key: str | None = Field(
+        default=None,
+        description="Shared API key required for protected API endpoints.",
+    )
 
     # --- Business Logic ---
     arr_threshold: int = Field(
